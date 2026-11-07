@@ -1,50 +1,49 @@
 import type { ChangeEvent, FormEvent } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback,useEffect,useMemo,useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import type { BaseRecord } from '../../types/models'
-import { deletePlatformRecord, listPlatformRecords, savePlatformRecord, setPlatformRecordStatus } from '../../services/dataRepository'
+import { deletePlatformRecord,listPlatformRecords,savePlatformRecord,setPlatformRecordStatus } from '../../services/dataRepository'
 import { PageHeader } from '../../components/common/PageHeader'
 import { StatusBadge } from '../../components/common/StatusBadge'
 import { Modal } from '../../components/common/Modal'
 import { useApp } from '../../contexts/AppContext'
 import { toApiError } from '../../services/api/errorHandler'
 import { createCsv, parseCsv } from '../../utils/csv'
-
-interface ResourceRow extends BaseRecord {
-  id: string
-  name: string
-  status: string
-  [key: string]: string | number | boolean
+const config:Record<string,{title:string;description:string;resource:string;fields:string[];summary:string[]}>={
+ stores:{title:'Stores',description:'Manage every storefront connected to your platform.',resource:'stores',fields:['name','owner','domain','plan'],summary:['Stores','Active','Trial']},
+ tenants:{title:'Tenants',description:'Manage store owners, account status, and tenant activity.',resource:'tenants',fields:['name','email','plan'],summary:['Tenants','Active','Trial']},
+ 'platform-users':{title:'Platform users',description:'Control access for your internal operations team.',resource:'platform-users',fields:['name','email','role'],summary:['Team members','Active','Invited']},
+ roles:{title:'Roles & permissions',description:'Define platform roles and the permissions assigned to each team.',resource:'roles',fields:['name','users','permissions'],summary:['Roles','Active','Permissions']},
+ plans:{title:'Subscription plans',description:'Configure pricing and usage limits for your SaaS plans.',resource:'plans',fields:['name','monthly','annual','stores','products'],summary:['Plans','Active','Subscribers']},
+ subscriptions:{title:'Subscriptions',description:'Review tenant plans, renewal dates, and subscription status.',resource:'subscriptions',fields:['tenant','store','plan','cycle','nextBilling','amount'],summary:['Subscriptions','Active','Trial']},
+ billing:{title:'Billing & invoices',description:'Review invoices and keep account billing organized.',resource:'billing',fields:['number','tenant','amount','dueDate'],summary:['Invoices','Paid','Outstanding']},
+ payments:{title:'Payments & transactions',description:'Review payment activity from connected gateways.',resource:'payments',fields:['tenant','invoice','gateway','amount','date'],summary:['Transactions','Paid','Failed']},
+ promotions:{title:'Discounts & promotions',description:'Manage coupon codes, discount campaigns, and redemption activity.',resource:'promotions',fields:['name','code','discount','redemptions','expires'],summary:['Promotions','Active','Redemptions']},
+ monitoring:{title:'System monitoring',description:'Monitor service health and key platform performance indicators. Mock monitoring data.',resource:'monitoring',fields:['name','usage','lastSync'],summary:['Services','Operational','Incidents']},
+ 'audit-logs':{title:'Audit logs',description:'Review administrative actions and platform events. Mock audit data.',resource:'audit-logs',fields:['user','action','resource','ip'],summary:['Events today','Administrators','Failed actions']},
+ notifications:{title:'Notifications',description:'Draft platform announcements and review delivery history.',resource:'notifications',fields:['title','type','audience','sent'],summary:['Notifications','Sent','Drafts']},
+ integrations:{title:'Integrations & API',description:'Review connected services and API usage. Credentials are never shown here.',resource:'integrations',fields:['name','category','usage','lastSync'],summary:['Integrations','Connected','API requests']},
+ settings:{title:'Global settings',description:'Configure platform profile, locale, billing, and tenant defaults.',resource:'settings',fields:['platformName','currency','timezone','language'],summary:['Settings','Saved','Environment']},
+ security:{title:'Security settings',description:'Review active sessions and administrator access policies.',resource:'security',fields:['name','email','role','lastLogin'],summary:['Active sessions','MFA policy','Security events']},
+ support:{title:'Support & helpdesk',description:'Triage tenant questions and follow support resolution progress.',resource:'support',fields:['subject','tenant','priority','assignee'],summary:['Open tickets','Pending','Resolved']},
 }
-
-const config = {
-  // ... rest of existing config object ...
-}
-
-export function ResourcePage() {
-  // ... existing component code until row rendering ...
-
-  {rows.map((row: unknown) => {
-    const safeRow = row as ResourceRow
-    return (
-      <tr key={safeRow.id}>
-        {columnKeys.map(key => (
-          <td key={key}>
-            {key === 'status' ? (
-              <StatusBadge status={String(safeRow[key])} />
-            ) : key === 'id' ? (
-              <strong className="record-id">{display(safeRow[key])}</strong>
-            ) : key === 'amount' || key === 'mrr' || key === 'monthly' || key === 'annual' ? (
-              `$${Number(safeRow[key]).toLocaleString()}`
-            ) : (
-              display(safeRow[key])
-            )}
-          </td>
-        ))}
-        {/* ... rest of existing row rendering ... */}
-      </tr>
-    )
-  })}
-
-  // ... rest of existing component code ...
-}
+function pretty(value:string){return value.replace(/([A-Z])/g,' $1').replace(/^./,x=>x.toUpperCase())}
+function display(value:unknown){if(typeof value==='number'&&value>0)return value.toLocaleString();return String(value??'—')}
+export function ResourcePage(){const path=useLocation().pathname.split('/')[1]||'stores';const page=config[path]??config.stores;const{toast}=useApp();const mockMode=import.meta.env.VITE_USE_MOCK_API==='true';const needsDomainActions=['subscriptions','billing','payments','monitoring','audit-logs','security'].includes(page.resource);const canMutate=mockMode||!needsDomainActions;const canChangeStatus=mockMode||['stores','tenants'].includes(page.resource);const[rows,setRows]=useState<BaseRecord[]>([]);const[query,setQuery]=useState('');const[status,setStatus]=useState('All');const[currentPage,setCurrentPage]=useState(1);const[total,setTotal]=useState(0);const[loadError,setLoadError]=useState('');const[loading,setLoading]=useState(false);const[modal,setModal]=useState<'create'|'edit'|'details'|'delete'|null>(null);const[selected,setSelected]=useState<BaseRecord|null>(null);const[form,setForm]=useState<Record<string,string>>({});const[busy,setBusy]=useState(false);const[sortBy,setSortBy]=useState('');const[sortDirection,setSortDirection]=useState<'asc'|'desc'>('asc');
+ const load=useCallback(async()=>{setLoading(true);setLoadError('');try{const data=await listPlatformRecords(page.resource,query,status,currentPage,8,sortBy,sortDirection);setRows(data.items);setTotal(data.total)}catch(error){setLoadError(toApiError(error).message)}finally{setLoading(false)}},[page.resource,query,status,currentPage,sortBy,sortDirection]);useEffect(()=>{void load()},[load])
+ const openForm=(record?:BaseRecord)=>{setSelected(record??null);setForm(record?Object.fromEntries(page.fields.map(field=>[field,String(record[field]??'')])):{});setModal(record?'edit':'create')}
+ const columnKeys=useMemo(()=>{if(rows[0])return ['id',...page.fields,'status'];return ['id',...page.fields,'status']},[page.fields,rows])
+ const submit=async(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();setBusy(true);try{await savePlatformRecord(page.resource,{...form},selected?.id);setModal(null);await load();toast(`${page.title.slice(0,-1)} ${selected?'updated':'created'} in demo data.`)}catch{toast('Unable to save this record.','error')}finally{setBusy(false)}}
+ const exportCsv=async()=>{const first=await listPlatformRecords(page.resource,query,status,1,500,sortBy,sortDirection);const rows=[columnKeys,...first.items.map(row=>columnKeys.map(key=>String(row[key]??'')))];for(let pageNumber=2;(pageNumber-1)*first.pageSize<first.total;pageNumber++){const next=await listPlatformRecords(page.resource,query,status,pageNumber,first.pageSize,sortBy,sortDirection);rows.push(...next.items.map(row=>columnKeys.map(key=>String(row[key]??''))))}const csv=createCsv(rows);const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=`${page.resource}.csv`;link.click();window.setTimeout(()=>URL.revokeObjectURL(url),0);toast(`${rows.length-1} ${page.title.toLowerCase()} exported as CSV.`)}
+ const handleImport=async(event:ChangeEvent<HTMLInputElement>)=>{const file=event.target.files?.[0];event.target.value='';if(!file)return;try{if(file.size>2*1024*1024)throw new Error('CSV files must be 2 MB or smaller.');const rows=parseCsv((await file.text()).replace(/^\uFEFF/,''));const headers=(rows.shift()??[]).map(value=>value.trim().toLowerCase());if(!headers.includes('name')||!headers.includes('domain'))throw new Error('CSV must include name and domain columns.');if(rows.length>100)throw new Error('CSV imports are limited to 100 data rows.');if(new Set(headers).size!==headers.length)throw new Error('CSV column names must be unique.');const entries=rows.map(values=>Object.fromEntries(headers.map((header,index)=>[header,(values[index]??'').trim()])));let imported=0;let skipped=0;for(const entry of entries){if(!entry.name||!entry.domain||!entry.domain.includes('.')){skipped++;continue}await savePlatformRecord('stores',{name:entry.name,owner:entry.owner||'Unassigned',domain:entry.domain,plan:entry.plan||'Free',mrr:Number(entry.mrr)||0,products:Number(entry.products)||0});imported++}await load();toast(`${imported} store records imported${skipped?`; ${skipped} invalid rows skipped`:''} to demo data.`)}catch(error){toast(error instanceof Error?error.message:'Could not read that CSV file.','error')}}
+ const handleStatus=async(row:BaseRecord)=>{const next=row.status==='Suspended'?'Active':'Suspended';await setPlatformRecordStatus(page.resource,row.id,next);await load();toast(`${String(row.name??row.id)} ${next.toLowerCase()} in demo data.`)}
+ const handleDelete=async()=>{if(!selected)return;await deletePlatformRecord(page.resource,selected.id);setModal(null);await load();toast('Record deleted from demo data.')}
+ return <><PageHeader title={page.title} description={page.description} actions={<><button className="btn btn-outline-secondary" onClick={exportCsv}><i className="bi bi-download me-2"/>Export CSV</button>{canMutate&&<button className="btn btn-primary" onClick={()=>openForm()}><i className="bi bi-plus-lg me-2"/>{path==='platform-users'?'Invite user':path==='roles'?'Create role':path==='plans'?'Create plan':path==='billing'?'Create invoice':path==='promotions'?'Create coupon':path==='notifications'?'Create announcement':path==='support'?'Create ticket':'Add '+page.title.replace(/s$/,'')}</button>}{path==='stores'&&<label className="btn btn-outline-secondary import-button"><i className="bi bi-upload me-2"/>Import CSV<input type="file" accept=".csv,text/csv" onChange={event=>void handleImport(event)}/></label>}</>}/>
+ {mockMode&&<div className="settings-notice" role="status"><i className="bi bi-info-circle"/> Illustrative browser demo data only. Changes stay in this browser; payment, health, audit and security statuses are not verified records.</div>}
+ <div className="resource-stats">{page.summary.map((label,index)=><div className="resource-stat" key={label}><span>{label}</span><strong>{index===0?total:index===1?Math.max(0,rows.filter(row=>row.status==='Active').length):index===2?'—':'—'}</strong><small>{index===1?'Across current results':'Mock environment'}</small></div>)}</div>
+ <section className="panel resource-panel"><div className="resource-toolbar"><div className="table-title"><h2>{page.title} directory</h2><span className="table-count">{total} records</span></div><div className="table-filters"><label className="table-search"><i className="bi bi-search"/><input aria-label={`Search ${page.title}`} placeholder={`Search ${page.title.toLowerCase()}...`} value={query} onChange={event=>{setQuery(event.target.value);setCurrentPage(1)}}/></label><select className="form-select status-filter" aria-label="Filter by status" value={status} onChange={event=>{setStatus(event.target.value);setCurrentPage(1)}}><option>All</option>{['Active','Trial','Past due','Suspended','Draft','Paid','Failed','Pending','Open','Resolved'].map(item=><option key={item}>{item}</option>)}</select><button className="btn btn-outline-secondary" title="Refresh list" onClick={()=>void load()}><i className="bi bi-arrow-clockwise"/></button></div></div>
+ {loadError?<div className="error-state"><i className="bi bi-exclamation-triangle"/><strong>Couldn’t load {page.title.toLowerCase()}</strong><span>{loadError}</span><button className="btn btn-outline-secondary btn-sm" onClick={()=>void load()}>Try again</button></div>:loading?<div className="loading-skeleton"><span/><span/><span/><span/></div>:<><div className="table-responsive"><table className="table align-middle data-table"><thead><tr>{columnKeys.map(key=><th key={key}><button className="sort-button" onClick={()=>{setSortBy(key);setSortDirection(sortBy===key&&sortDirection==='asc'?'desc':'asc')}}>{pretty(key)} {sortBy===key&&<i className={`bi ${sortDirection==='asc'?'bi-arrow-up':'bi-arrow-down'}`}/>}</button></th>)}<th className="text-end">Actions</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}>{columnKeys.map(key=><td key={key}>{key==='status'?<StatusBadge status={String(row[key])}/>:key==='id'?<strong className="record-id">{display(row[key])}</strong>:key==='amount'||key==='mrr'||key==='monthly'||key==='annual'?`$${Number(row[key]).toLocaleString()}`:display(row[key])}</td>)}<td><div className="row-actions"><button className="btn-icon" aria-label="View details" title="View details" onClick={()=>{setSelected(row);setModal('details')}}><i className="bi bi-eye"/></button>{canMutate&&<button className="btn-icon" aria-label="Edit" title="Edit" onClick={()=>openForm(row)}><i className="bi bi-pencil"/></button>}{(canMutate||canChangeStatus)&&<div className="dropdown"><button className="btn-icon" data-bs-toggle="dropdown" aria-label="More actions"><i className="bi bi-three-dots"/></button><div className="dropdown-menu dropdown-menu-end">{canChangeStatus&&<button className="dropdown-item" onClick={()=>void handleStatus(row)}>{row.status==='Suspended'?'Reactivate':'Suspend'}</button>}{canMutate&&<button className="dropdown-item text-danger" onClick={()=>{setSelected(row);setModal('delete')}}>Delete record</button>}</div></div>}</div></td></tr>)}{!rows.length&&<tr><td colSpan={columnKeys.length+1}><div className="empty-state"><i className="bi bi-inbox"/><strong>No records found</strong><span>Try another search or create a new record.</span><button className="btn btn-primary btn-sm" onClick={()=>openForm()}>Create record</button></div></td></tr>}</tbody></table></div>
+ <div className="table-pagination"><span>Showing <b>{total?((currentPage-1)*8+1):0}–{Math.min(currentPage*8,total)}</b> of <b>{total}</b> results</span><div><button className="btn btn-outline-secondary btn-sm" disabled={currentPage===1} onClick={()=>setCurrentPage(page=>page-1)}>Previous</button><button className="btn btn-outline-secondary btn-sm" disabled={currentPage*8>=total} onClick={()=>setCurrentPage(page=>page+1)}>Next</button></div></div></>}</section>
+ {modal==='create'||modal==='edit'?<Modal title={`${modal==='create'?'Create':'Edit'} ${page.title.replace(/s$/,'')}`} onClose={()=>setModal(null)}><form onSubmit={submit}><div className="modal-body form-grid">{page.fields.map(field=><label key={field}>{pretty(field)}<input className="form-control" required={field==='name'||field==='email'||field==='subject'} type={field==='email'?'email':'text'} value={form[field]??''} onChange={event=>setForm({...form,[field]:event.target.value})} placeholder={`Enter ${pretty(field).toLowerCase()}`}/></label>)}<p className="form-hint"><i className="bi bi-info-circle me-1"/>Changes are stored in local demo data. No real account or billing action will occur.</p></div><div className="modal-actions"><button type="button" className="btn btn-outline-secondary" onClick={()=>setModal(null)}>Cancel</button><button className="btn btn-primary" disabled={busy}>{busy?'Saving…':'Save changes'}</button></div></form></Modal>:null}
+ {modal==='details'&&selected?<Modal title="Record details" onClose={()=>setModal(null)}><div className="details-list">{Object.entries(selected).map(([key,value])=><div key={key}><span>{pretty(key)}</span><strong>{key==='status'?<StatusBadge status={String(value)}/>:display(value)}</strong></div>)}</div><div className="modal-actions"><button className="btn btn-outline-secondary" onClick={()=>setModal(null)}>Close</button><button className="btn btn-primary" onClick={()=>openForm(selected)}>Edit record</button></div></Modal>:null}
+ {modal==='delete'&&selected?<Modal title="Delete this record?" onClose={()=>setModal(null)}><div className="modal-body"><p>This removes <strong>{String(selected.name??selected.id)}</strong> from this browser’s demo dataset. This cannot be undone.</p></div><div className="modal-actions"><button className="btn btn-outline-secondary" onClick={()=>setModal(null)}>Cancel</button><button className="btn btn-danger" onClick={()=>void handleDelete()}>Delete record</button></div></Modal>:null}</>}
