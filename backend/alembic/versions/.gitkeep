@@ -1,0 +1,2 @@
+# Placeholder: the migration chain is intentionally empty in Phase 1.
+# Phase 2 adds PG-dialect-authored migrations, each explained and approved before applying.

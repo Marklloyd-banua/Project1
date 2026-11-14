@@ -1,0 +1,186 @@
+# Phase 1 verification only. Phase 2+ gets its own, separately approved workflows.
+# No repository secrets: CI-local ephemeral service-container credentials only.
+name: backend-phase1-verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-phase1-verification.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite-full-suite:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Full pytest (SQLite defaults)
+        run: PYTHONPATH=. pytest -q
+
+      - name: Alembic no-op verification (empty migration chain)
+        run: |
+          alembic upgrade head
+          alembic history
+          python - <<'PY'
+          from sqlalchemy import create_engine, inspect
+          tables = inspect(create_engine("sqlite:///./dev.db")).get_table_names()
+          assert tables == [], f"unexpected tables after no-op upgrade: {tables}"
+          print("alembic no-op verified: 0 tables")
+          PY
+
+      - name: FastAPI startup + health checks (SQLite)
+        run: |
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 >/tmp/uvicorn.log 2>&1 &
+          ok=""
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8000/api/v1/health >/dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          if [ -z "$ok" ]; then
+            echo "ERROR: backend did not start within 30 seconds"
+            tail -50 /tmp/uvicorn.log
+            exit 1
+          fi
+          curl -sf http://127.0.0.1:8000/api/v1/health -o /tmp/health.json
+          curl -sf http://127.0.0.1:8000/api/v1/health/ready -o /tmp/ready.json
+          python - <<'PY'
+          import json
+          health = json.load(open("/tmp/health.json"))
+          ready = json.load(open("/tmp/ready.json"))
+          assert health["ok"] is True and health["status"] == "healthy"
+          assert ready["ok"] is True and ready["status"] == "ready"
+          assert ready["checks"]["database"] == "connected"
+          assert ready["checks"]["auth"] == "not_configured"
+          print("health/ready verified: database connected, auth not_configured")
+          PY
+
+      - name: Safe-error contract over HTTP (misconfigured DATABASE_URL)
+        run: |
+          DATABASE_URL='postgresql+pg8000://ci_user:ci_secret_password@127.0.0.1:1/db' \
+            nohup uvicorn app.main:app --host 127.0.0.1 --port 8001 >/tmp/uvicorn-bad.log 2>&1 &
+          ok=""
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8001/api/v1/health >/dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          if [ -z "$ok" ]; then
+            echo "ERROR: misconfigured backend did not start within 30 seconds"
+            tail -50 /tmp/uvicorn-bad.log
+            exit 1
+          fi
+          # Expected failure: capture WITHOUT 'curl -f' so the 503 body/status are recorded.
+          status=$(curl -s -o /tmp/ready-bad.json -w '%{http_code}' http://127.0.0.1:8001/api/v1/health/ready)
+          python - "$status" <<'PY'
+          import json, sys
+          status = sys.argv[1]
+          assert status == "503", f"expected HTTP 503, got {status!r}"
+          raw = open("/tmp/ready-bad.json").read()
+          body = json.loads(raw)
+          assert body["ok"] is False
+          assert body["status"] == "not_ready"
+          assert body["checks"]["database"] == "error"
+          for forbidden in ("ci_user", "ci_secret_password", "127.0.0.1", "pg8000", "InterfaceError"):
+              assert forbidden not in raw, f"response leaked: {forbidden}"
+          print("safe-error contract verified over HTTP: 503 / ok:false / not_ready / error, zero leakage")
+          PY
+
+  postgres-pg8000-suite:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: saas_admin_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+pg8000://postgres:postgres@127.0.0.1:5432/saas_admin_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Wait for PostgreSQL readiness (explicit failure)
+        run: |
+          ready=""
+          for i in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; then ready=1; break; fi
+            sleep 2
+          done
+          if [ -z "$ready" ]; then
+            echo "ERROR: PostgreSQL was not ready within 60 seconds"
+            exit 1
+          fi
+
+      - name: Full pytest against PostgreSQL 16 (pg8000)
+        run: PYTHONPATH=. pytest -q
+
+      - name: Alembic no-op verification against PostgreSQL
+        run: |
+          alembic upgrade head
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, inspect
+          tables = inspect(create_engine(os.environ["DATABASE_URL"])).get_table_names()
+          assert tables == [], f"unexpected tables in PG after no-op upgrade: {tables}"
+          print("alembic no-op verified against PostgreSQL: 0 tables")
+          PY
+
+      - name: FastAPI startup + health/ready against PostgreSQL
+        run: |
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 >/tmp/uvicorn-pg.log 2>&1 &
+          ok=""
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8000/api/v1/health >/dev/null; then ok=1; break; fi
+            sleep 1
+          done
+          if [ -z "$ok" ]; then
+            echo "ERROR: backend did not start within 30 seconds against PostgreSQL"
+            tail -50 /tmp/uvicorn-pg.log
+            exit 1
+          fi
+          curl -sf http://127.0.0.1:8000/api/v1/health/ready -o /tmp/ready-pg.json
+          python - <<'PY'
+          import json, os
+          from sqlalchemy import create_engine, inspect
+          ready = json.load(open("/tmp/ready-pg.json"))
+          assert ready["ok"] is True and ready["status"] == "ready"
+          assert ready["checks"]["database"] == "connected"
+          tables = inspect(create_engine(os.environ["DATABASE_URL"])).get_table_names()
+          assert tables == [], f"server boot must not create schema: {tables}"
+          print("PG health/ready verified; probe created no tables")
+          PY

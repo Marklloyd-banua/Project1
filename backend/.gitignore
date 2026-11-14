@@ -1,0 +1,17 @@
+# Python/venv artifacts (backend-local)
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
+.env.local
+.env.*.local
+*.db
+*.egg-info/
+dist/
+build/
