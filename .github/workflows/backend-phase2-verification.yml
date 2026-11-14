@@ -1,0 +1,239 @@
+# Phase 2 PostgreSQL verification only (separate from Phase 1). Do not replace or
+# weaken the Phase 1 workflow. CI-local ephemeral service-container credentials
+# only; never production databases or credentials.
+name: backend-phase2-verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-phase2-verification.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-phase2-suite:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: saas_admin_phase2_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+pg8000://postgres:postgres@127.0.0.1:5432/saas_admin_phase2_test
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Wait for PostgreSQL readiness (explicit failure)
+        run: |
+          ready=""
+          for i in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; then ready=1; break; fi
+            sleep 2
+          done
+          if [ -z "$ready" ]; then
+            echo "ERROR: PostgreSQL was not ready within 60 seconds"
+            exit 1
+          fi
+          psql -h 127.0.0.1 -U postgres -d saas_admin_phase2_test -c "SELECT version();"
+
+      - name: Ensure Phase 2 tests are collected (not silently skipped)
+        run: |
+          PYTHONPATH=. pytest --collect-only -q \
+            tests/test_models.py \
+            tests/test_migrations.py \
+            tests/test_constraints_pg.py \
+            tests/test_order_numbering_pg.py \
+            tests/test_ledger_immutability_pg.py | tee /tmp/collect.txt
+          python - <<'PY'
+          # Collect-only output ends with a summary like "40 tests collected".
+          import re, pathlib
+          text = pathlib.Path('/tmp/collect.txt').read_text()
+          m = re.search(r'(\d+)\s+tests?\s+collected', text)
+          assert m, f"could not parse collection count:\n{text}"
+          count = int(m.group(1))
+          # 8 portable models + 4 migrations + 17 constraints + 5 ordering + 6 ledger = 40
+          assert count >= 40, f"expected >= 40 Phase 2 tests collected, got {count}\n{text}"
+          print(f"collection verified: {count} tests")
+          PY
+
+      - name: Run Phase 2 tests (portable + PostgreSQL 16)
+        run: |
+          set -o pipefail
+          PYTHONPATH=. pytest -q -ra \
+            tests/test_models.py \
+            tests/test_migrations.py \
+            tests/test_constraints_pg.py \
+            tests/test_order_numbering_pg.py \
+            tests/test_ledger_immutability_pg.py 2>&1 | tee /tmp/pytest-phase2.out
+          python - <<'PY'
+          # Fail if PG-only tests were skipped as "PostgreSQL-only verification".
+          text = open('/tmp/pytest-phase2.out').read()
+          forbidden = 'PostgreSQL-only verification (Phase 2)'
+          assert forbidden not in text, (
+              f"PG-dependent tests were silently skipped:\n{text}"
+          )
+          print("skip-guard verified: no PostgreSQL-only skips")
+          PY
+
+      - name: Execute and verify privileges.sql (disposable DB, owner role)
+        run: |
+          python - <<'PY'
+          import os, sys, uuid
+          from sqlalchemy import create_engine, text
+
+          server = "postgresql+pg8000://postgres:postgres@127.0.0.1:5432"
+          dbname = f"phase2_priv_{uuid.uuid4().hex[:10]}"
+          admin = owner = rt = None
+          primary_exc = None
+          cleanup_errors = []
+
+          try:
+              admin = create_engine(server + "/postgres", isolation_level="AUTOCOMMIT")
+              with admin.connect() as c:
+                  c.execute(text(f'CREATE DATABASE "{dbname}"'))
+
+              os.environ["DATABASE_URL"] = f"{server}/{dbname}"
+              from app.core.config import get_settings
+              get_settings.cache_clear()
+              from alembic import command
+              from alembic.config import Config
+              cfg = Config("alembic.ini")
+              cfg.set_main_option("script_location", "alembic")
+              command.upgrade(cfg, "head")
+
+              # Execute privileges.sql as the migration/owner role (postgres superuser).
+              sql = open("db/privileges.sql", encoding="utf-8").read()
+              owner = create_engine(f"{server}/{dbname}")
+              with owner.begin() as c:
+                  c.exec_driver_sql(sql)
+                  # Set a disposable password so the runtime role can connect for
+                  # verification only (nothing committed to the repo).
+                  c.execute(text("ALTER ROLE app_runtime PASSWORD 'ci_phase2_runtime_pw'"))
+
+              # Verify role is not superuser and owns no tables.
+              with owner.connect() as c:
+                  is_super = c.execute(
+                      text("SELECT rolsuper FROM pg_roles WHERE rolname='app_runtime'")
+                  ).scalar_one()
+                  assert is_super is False, "app_runtime must not be superuser"
+                  owned = c.execute(
+                      text("SELECT count(*) FROM pg_tables WHERE tableowner='app_runtime'")
+                  ).scalar_one()
+                  assert int(owned) == 0, "app_runtime must not own tables"
+
+              # Seed minimal rows as owner for ledger operations.
+              with owner.begin() as c:
+                  store = c.execute(text(
+                      "INSERT INTO stores (name, owner, domain) "
+                      "VALUES ('S','O','priv.example.com') RETURNING id"
+                  )).scalar_one()
+                  product = c.execute(text(
+                      "INSERT INTO products (store_id, name, slug, price, stock_quantity) "
+                      "VALUES (:s,'P','p',1.00,5) RETURNING id"
+                  ), {"s": store}).scalar_one()
+                  order = c.execute(text(
+                      "INSERT INTO orders (store_id, order_number, customer_name, "
+                      "customer_email, subtotal, shipping_cost, discount, total, currency, "
+                      "ship_line1, ship_city, ship_postal_code, ship_country) "
+                      "VALUES (:s,'ORD-000001','C','c@example.com',0,0,0,0,'USD',"
+                      "'L','C','123','US') RETURNING id"
+                  ), {"s": store}).scalar_one()
+
+              # Runtime-role verification.
+              runtime_url = f"postgresql+pg8000://app_runtime:ci_phase2_runtime_pw@127.0.0.1:5432/{dbname}"
+              rt = create_engine(runtime_url)
+
+              # SELECT/INSERT must succeed on both ledgers.
+              with rt.begin() as c:
+                  c.execute(text(
+                      "INSERT INTO inventory_adjustments (store_id, product_id, "
+                      "adjustment_amount, previous_quantity, new_quantity, reason) "
+                      "VALUES (:s,:p,1,4,5,'ci')"
+                  ), {"s": store, "p": product})
+                  c.execute(text(
+                      "INSERT INTO order_status_history (store_id, order_id, "
+                      "previous_status, new_status, reason) "
+                      "VALUES (:s,:o,'Unpaid','Pending','ci')"
+                  ), {"s": store, "o": order})
+              with rt.connect() as c:
+                  assert c.execute(text("SELECT count(*) FROM inventory_adjustments")).scalar_one() >= 1
+                  assert c.execute(text("SELECT count(*) FROM order_status_history")).scalar_one() >= 1
+
+              def assert_42501(sql, params=None):
+                  try:
+                      with rt.begin() as c:
+                          c.execute(text(sql), params or {})
+                  except Exception as exc:
+                      msg = str(exc)
+                      orig = getattr(exc, 'orig', None)
+                      code = str(getattr(orig, 'sqlstate', '') or getattr(orig, 'pgcode', '') or '')
+                      assert code == '42501' or '42501' in msg or 'insufficient_privilege' in msg.lower(), exc
+                      return
+                  raise AssertionError(f"expected 42501 for: {sql}")
+
+              # UPDATE/DELETE must be rejected with 42501 on both ledgers.
+              for table in ("inventory_adjustments", "order_status_history"):
+                  assert_42501(f"UPDATE {table} SET reason='x'")
+                  assert_42501(f"DELETE FROM {table}")
+
+              print("privileges.sql executed and verified: ledger SELECT/INSERT ok, UPDATE/DELETE 42501, role not superuser/owner")
+          except Exception as exc:
+              primary_exc = exc
+              raise
+          finally:
+              # Failure-safe cleanup (attempted even if checks fail). Report any
+              # cleanup failures; do not silently suppress them.
+              for label, engine in (("runtime engine", rt), ("owner engine", owner)):
+                  if engine is not None:
+                      try:
+                          engine.dispose()
+                      except Exception as exc:
+                          cleanup_errors.append(f"{label} dispose: {exc}")
+              if admin is not None:
+                  try:
+                      with admin.connect() as c:
+                          c.execute(text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+                  except Exception as exc:
+                      cleanup_errors.append(f"drop disposable database {dbname}: {exc}")
+                  # app_runtime is cluster-wide in PostgreSQL; this workflow runs
+                  # against its own disposable service container, so we rely on the
+                  # container lifecycle rather than dropping the role.
+                  try:
+                      admin.dispose()
+                  except Exception as exc:
+                      cleanup_errors.append(f"admin engine dispose: {exc}")
+              if cleanup_errors:
+                  for err in cleanup_errors:
+                      print(f"CLEANUP ERROR: {err}", file=sys.stderr)
+                  if primary_exc is None:
+                      raise SystemExit(1)
+          PY
