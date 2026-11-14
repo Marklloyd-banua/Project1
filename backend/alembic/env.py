@@ -1,7 +1,9 @@
-"""Alembic environment (Phase 1 scaffold).
+"""Alembic environment (Phase 2).
 
-Wiring only: resolves the database URL from application configuration and exposes
-`target_metadata` (empty until Phase 2 introduces models). No migrations exist yet.
+Wiring: resolves the database URL from application configuration and exposes
+`target_metadata` = the SQLAlchemy DeclarativeBase metadata (all 19 Phase 2
+tables). The hand-written migrations (0001..0004) are the authoritative DDL;
+metadata exists for autogenerate parity checks only.
 """
 
 from __future__ import annotations
@@ -21,8 +23,13 @@ if config.config_file_name is not None:
 # Inject the application-configured URL (SQLite dev default / PostgreSQL via DATABASE_URL).
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
-# Phase 2 will assign the SQLAlchemy 2.x DeclarativeBase metadata here.
-target_metadata = None
+# Phase 2: assign the SQLAlchemy 2.x DeclarativeBase metadata. Importing the
+# models package registers all 19 tables on Base.metadata. The hand-written
+# migrations remain the AUTHORITATIVE DDL; metadata is for autogenerate
+# parity checks only.
+from app.models import Base
+
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
