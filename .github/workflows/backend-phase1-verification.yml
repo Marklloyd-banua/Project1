@@ -41,7 +41,9 @@ jobs:
           python - <<'PY'
           from sqlalchemy import create_engine, inspect
           tables = inspect(create_engine("sqlite:///./dev.db")).get_table_names()
-          assert tables == [], f"unexpected tables after no-op upgrade: {tables}"
+          assert tables == ["alembic_version"], (
+              f"unexpected tables after no-op upgrade: {tables}"
+          )
           print("alembic no-op verified: 0 tables")
           PY
 
@@ -156,7 +158,9 @@ jobs:
           import os
           from sqlalchemy import create_engine, inspect
           tables = inspect(create_engine(os.environ["DATABASE_URL"])).get_table_names()
-          assert tables == [], f"unexpected tables in PG after no-op upgrade: {tables}"
+          assert tables == ["alembic_version"], (
+              f"unexpected tables in PG after no-op upgrade: {tables}"
+          )
           print("alembic no-op verified against PostgreSQL: 0 tables")
           PY
 
@@ -181,6 +185,8 @@ jobs:
           assert ready["ok"] is True and ready["status"] == "ready"
           assert ready["checks"]["database"] == "connected"
           tables = inspect(create_engine(os.environ["DATABASE_URL"])).get_table_names()
-          assert tables == [], f"server boot must not create schema: {tables}"
+          assert tables == ["alembic_version"], (
+              f"server boot must not create schema: {tables}"
+          )
           print("PG health/ready verified; probe created no tables")
           PY
