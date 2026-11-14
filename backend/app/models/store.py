@@ -35,7 +35,9 @@ class Store(Base, UuidPk, Timestamped):
     plan: Mapped[str] = mapped_column(
         String(20), nullable=False, default="Free", server_default="Free"
     )
-    mrr: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    mrr: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), nullable=False, default=0, server_default=text("0")
+    )
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     logo_image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     banner_image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)

@@ -57,7 +57,7 @@ def upgrade() -> None:
         sa.Column("owner", sa.String(length=255), nullable=False),
         sa.Column("domain", sa.String(length=255), nullable=False),
         sa.Column("plan", sa.String(length=20), nullable=False, server_default="Free"),
-        sa.Column("mrr", sa.Numeric(12, 2), nullable=False),
+        sa.Column("mrr", sa.Numeric(12, 2), nullable=False, server_default=sa.text("0")),
         sa.Column("description", sa.String(), nullable=True),
         sa.Column("logo_image_url", sa.String(length=2048), nullable=True),
         sa.Column("banner_image_url", sa.String(length=2048), nullable=True),
