@@ -94,9 +94,35 @@ Phase 2 test split:
 
 This phase adds only the `backend/` directory and does **not** modify existing React frontend files, root `package.json`, mock behavior, or frontend mock/API selection.
 
+## B1.3B Administrator bootstrap and authentication
+
+This phase implements a narrow administrator bootstrap and staff authentication slice on top of the existing `StaffUser` model and Argon2id/JWT primitives.
+
+### Authentication endpoints
+
+- `POST /api/v1/auth/login` — accepts `email` and `password`, normalizes the email, verifies credentials against the runtime database, and returns a bearer access token only for accounts whose `status` is exactly `Active`.
+- `GET /api/v1/auth/me` — requires a bearer token, reloads the staff account from the runtime database on every request, and returns the current account only when its `status` is exactly `Active`.
+- Login and `/auth/me` reject missing, invalid, inactive, or non-`Active` accounts with **generic 401 responses** (no account-enumeration details).
+
+Not implemented in this phase: registration, refresh tokens, password reset, or role-management endpoints.
+
+### Administrator bootstrap command
+
+- Command: `python -m app.cli.bootstrap_admin` (run from `backend/` with the environment configured).
+- **Requires PostgreSQL** because it uses a PostgreSQL transaction-level advisory lock (`pg_advisory_xact_lock`) to serialize bootstrap attempts.
+- Uses an explicitly configured `BOOTSTRAP_DATABASE_URL` environment variable and **never falls back to `DATABASE_URL`**. `DATABASE_URL` is not an acceptable fallback for bootstrap.
+- Prompts for the administrator password with Python `getpass.getpass()` twice for confirmation. The password is **never** accepted as a CLI argument or environment variable.
+- Prompts for (or accepts) administrator email and full name, normalizes the email, and creates the account with `global_role="administrator"` and `status="Active"` using the existing Argon2id hashing primitives.
+- Runs in a PostgreSQL transaction and acquires the advisory lock to serialize bootstrap attempts.
+- Refuses duplicate administrator creation without modifying existing accounts.
+
+### Request validation errors
+
+Request-validation failures return the standard error envelope with `code="VALIDATION_ERROR"` and sanitized error entries containing only `loc`, `msg`, and `type`.
+
 ## B1.2 Security primitives (password hashing + JWT)
 
-These are **security primitives only**, not complete authentication or authorization. No login endpoints, `/auth/me`, refresh tokens, revocation, database access, or authorization logic are implemented.
+These are security primitives used by the B1.3B authentication/bootstrap flow. No refresh tokens, revocation, registration, password reset, or role-management endpoints are implemented.
 
 ### Password hashing
 
