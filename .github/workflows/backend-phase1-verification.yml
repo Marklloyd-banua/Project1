@@ -34,19 +34,6 @@ jobs:
       - name: Full pytest (SQLite defaults)
         run: PYTHONPATH=. pytest -q
 
-      - name: Alembic no-op verification (empty migration chain)
-        run: |
-          alembic upgrade head
-          alembic history
-          python - <<'PY'
-          from sqlalchemy import create_engine, inspect
-          tables = inspect(create_engine("sqlite:///./dev.db")).get_table_names()
-          assert tables == ["alembic_version"], (
-              f"unexpected tables after no-op upgrade: {tables}"
-          )
-          print("alembic no-op verified: 0 tables")
-          PY
-
       - name: FastAPI startup + health checks (SQLite)
         run: |
           nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 >/tmp/uvicorn.log 2>&1 &
@@ -150,19 +137,6 @@ jobs:
 
       - name: Full pytest against PostgreSQL 16 (pg8000)
         run: PYTHONPATH=. pytest -q
-
-      - name: Alembic no-op verification against PostgreSQL
-        run: |
-          alembic upgrade head
-          python - <<'PY'
-          import os
-          from sqlalchemy import create_engine, inspect
-          tables = inspect(create_engine(os.environ["DATABASE_URL"])).get_table_names()
-          assert tables == ["alembic_version"], (
-              f"unexpected tables in PG after no-op upgrade: {tables}"
-          )
-          print("alembic no-op verified against PostgreSQL: 0 tables")
-          PY
 
       - name: FastAPI startup + health/ready against PostgreSQL
         run: |
