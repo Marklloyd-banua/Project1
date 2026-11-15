@@ -93,3 +93,38 @@ Phase 2 test split:
 ## Frontend safety
 
 This phase adds only the `backend/` directory and does **not** modify existing React frontend files, root `package.json`, mock behavior, or frontend mock/API selection.
+
+## B1.2 Security primitives (password hashing + JWT)
+
+These are **security primitives only**, not complete authentication or authorization. No login endpoints, `/auth/me`, refresh tokens, revocation, database access, or authorization logic are implemented.
+
+### Password hashing
+
+- Algorithm: **Argon2id** (`argon2-cffi` / `argon2.PasswordHasher`).
+- Explicit parameters: `time_cost=2`, `memory_cost=19456` KiB, `parallelism=1`, `hash_len=32`, `salt_len=16`.
+- `hash_password` rejects passwords shorter than **12 characters**.
+- `verify_password` returns `False` for incorrect passwords and malformed/unverifiable stored hashes, and does not expose internal Argon2 exceptions.
+- Generated encoded hashes must fit within `staff_users.password_hash` (255 characters). Passwords and encoded hashes must never be logged.
+
+### JWT access tokens
+
+- Algorithm: **HS256 only** (fixed in code; the token header `alg` is never accepted as an allowed algorithm).
+- Required claims (exact set): `sub`, `iss`, `aud`, `iat`, `exp` (no optional claims).
+- `sub` must be a non-empty string.
+- Token lifetime: configured by `AUTH_ACCESS_TOKEN_EXPIRE_MINUTES` (default/bounded by settings; currently **15 minutes**).
+- Validation applies **30 seconds** of clock skew (`leeway`) and rejects missing, unexpected, malformed, expired, tampered, incorrectly signed, wrong-issuer, and wrong-audience tokens.
+- Timestamps are timezone-aware UTC. Invalid tokens raise a generic error that does not disclose token contents, secrets, or internal validation details. Tokens and secrets must never be logged.
+
+### Required environment configuration
+
+Provided via `app.core.config.get_settings()` / environment (see `backend/.env.example` placeholders):
+
+- `AUTH_JWT_SECRET` — required; must be at least **32 UTF-8 bytes** (use a strong, environment-specific value).
+- `AUTH_JWT_ISSUER` — required, non-empty.
+- `AUTH_JWT_AUDIENCE` — required, non-empty.
+- `AUTH_ACCESS_TOKEN_EXPIRE_MINUTES` — access-token lifetime in minutes (validated/bounded by settings; default 15).
+
+### Security warnings
+
+- **Production must use a cryptographically random secret** for `AUTH_JWT_SECRET` (and strong, environment-specific issuer/audience values).
+- **Never commit real credentials or secrets.** Use `backend/.env` (git-ignored) for local/production values and explicit non-production test-only values in CI/tests.
