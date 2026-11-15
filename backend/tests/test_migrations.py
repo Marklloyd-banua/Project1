@@ -77,7 +77,9 @@ def test_full_downgrade_base_then_reupgrade(pg_database_url):
     original_url = os.environ.get("DATABASE_URL")
     primary_exc: Exception | None = None
     try:
-        os.environ["DATABASE_URL"] = str(url)
+        os.environ["DATABASE_URL"] = url.render_as_string(
+            hide_password=False
+        )
         get_settings.cache_clear()
         cfg = Config(str(BACKEND_DIR / "alembic.ini"))
         cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
