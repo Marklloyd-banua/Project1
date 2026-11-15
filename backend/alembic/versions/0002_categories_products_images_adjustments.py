@@ -174,16 +174,16 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name="pk_inventory_adjustments"),
         sa.CheckConstraint(
-            "previous_quantity >= 0", name="ck_inventory_adjustments_previous_quantity_nonnegative"
+            "previous_quantity >= 0", name="previous_quantity_nonnegative"
         ),
         sa.CheckConstraint(
-            "new_quantity >= 0", name="ck_inventory_adjustments_new_quantity_nonnegative"
+            "new_quantity >= 0", name="new_quantity_nonnegative"
         ),
         sa.CheckConstraint(
             "new_quantity = previous_quantity + adjustment_amount",
-            name="ck_inventory_adjustments_adjustment_arithmetic",
+            name="adjustment_arithmetic",
         ),
-        sa.CheckConstraint("length(reason) >= 1", name="ck_inventory_adjustments_reason_required"),
+        sa.CheckConstraint("length(reason) >= 1", name="reason_required"),
     )
     op.create_index(
         "ix_inventory_adjustments_store_product_occurred",

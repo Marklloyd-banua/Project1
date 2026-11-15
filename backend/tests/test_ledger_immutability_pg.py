@@ -38,11 +38,8 @@ def runtime_role(pg_engine, pg_database_url):
     # Fresh role for this module (idempotent against leftovers).
     exec_sql(pg_engine, f"DROP ROLE IF EXISTS {RUNTIME_ROLE}")
     exec_sql(pg_engine, f"CREATE ROLE {RUNTIME_ROLE} LOGIN PASSWORD '{RUNTIME_PASSWORD}'")
+    exec_sql(pg_engine, f"GRANT USAGE ON SCHEMA public TO {RUNTIME_ROLE}")
     for ledger in LEDGERS:
-        exec_sql(
-            pg_engine,
-            f"GRANT USAGE ON SCHEMA public TO {RUNTIME_ROLE}",
-        )
         exec_sql(
             pg_engine,
             f"GRANT SELECT, INSERT ON {ledger} TO {RUNTIME_ROLE}",
@@ -51,9 +48,21 @@ def runtime_role(pg_engine, pg_database_url):
             pg_engine,
             f"REVOKE UPDATE, DELETE ON {ledger} FROM {RUNTIME_ROLE}",
         )
-    yield runtime_url
-    # Cleanup: role owns nothing; drop it (connection closed first).
-    exec_sql(pg_engine, f"DROP ROLE IF EXISTS {RUNTIME_ROLE}")
+    try:
+        yield runtime_url
+    finally:
+        # Cleanup: revoke dependent privileges before dropping the role so
+        # DROP ROLE succeeds even when a test raised an exception.
+        for ledger in LEDGERS:
+            exec_sql(
+                pg_engine,
+                f"REVOKE ALL PRIVILEGES ON {ledger} FROM {RUNTIME_ROLE}",
+            )
+        exec_sql(
+            pg_engine,
+            f"REVOKE USAGE ON SCHEMA public FROM {RUNTIME_ROLE}",
+        )
+        exec_sql(pg_engine, f"DROP ROLE IF EXISTS {RUNTIME_ROLE}")
 
 
 @pytest.fixture()

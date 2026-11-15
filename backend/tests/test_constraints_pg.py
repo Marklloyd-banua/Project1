@@ -27,7 +27,7 @@ def test_cross_store_category_reference_rejected(pg_engine):
         "INSERT INTO products (store_id, name, slug, price, stock_quantity, "
         "category_id) VALUES (:s, 'X', 'x', 1.00, 0, :c)",
         {"s": ids["store_b"], "c": ids["category_a"]},
-        match="product_images|foreign key|violates",  # FK violation surfaces
+        match="products_store_category_fk",  # FK violation surfaces
     )
 
 
@@ -291,7 +291,7 @@ def test_product_with_cart_item_cannot_be_deleted(pg_engine):
         pg_engine,
         "DELETE FROM products WHERE id = :p",
         {"p": ids["product_a"]},
-        match="cart_items_store_product_fk|restrict",
+        match="cart_items_store_product_fk",
     )
 
 
@@ -310,7 +310,7 @@ def test_product_with_adjustment_history_cannot_be_deleted(pg_engine):
         pg_engine,
         "DELETE FROM products WHERE id = :p",
         {"p": ids["product_a"]},
-        match="inventory_adjustments_store_product_fk|restrict",
+        match="inventory_adjustments_store_product_fk",
     )
 
 
