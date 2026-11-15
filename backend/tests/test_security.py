@@ -58,9 +58,15 @@ def _make_token(
         payload.update(extra_claims)
 
     headers = {"alg": algorithm, "typ": "JWT"} if algorithm is not None else {"typ": "JWT"}
+    if algorithm is None:
+        signing_key = None
+    elif secret is not None:
+        signing_key = secret
+    else:
+        signing_key = default_secret
     return jwt.encode(
         payload,
-        default_secret if secret is None else secret,
+        signing_key,
         algorithm=algorithm,
         headers=headers,
     )
