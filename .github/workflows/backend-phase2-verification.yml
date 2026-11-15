@@ -40,6 +40,12 @@ jobs:
       PGPORT: "5432"
       PGUSER: postgres
       PGPASSWORD: postgres
+      # B1.1 config-only: required JWT settings for config/import/startup compatibility in CI.
+      # Non-production, test-only values; NEVER use real secrets in committed workflows.
+      AUTH_JWT_SECRET: test-only-ci-jwt-secret-value-at-least-32-chars
+      AUTH_JWT_ISSUER: https://ci.test.issuer.local
+      AUTH_JWT_AUDIENCE: northstar-ci-test-audience
+      AUTH_ACCESS_TOKEN_EXPIRE_MINUTES: "15"
     steps:
       - uses: actions/checkout@v4
 

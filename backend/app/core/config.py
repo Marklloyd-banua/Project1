@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     # NEVER commit real credentials; production values belong in backend/.env (git-ignored).
     database_url: str = Field(default="sqlite:///./dev.db", alias="DATABASE_URL")
 
+    # B1 (approved, config-only): JWT auth settings. Required for startup/config validation.
+    # Use strong, environment-specific, non-committed values. CI/tests must use test-only values.
+    auth_jwt_secret: str = Field(alias="AUTH_JWT_SECRET")
+    auth_jwt_issuer: str = Field(alias="AUTH_JWT_ISSUER")
+    auth_jwt_audience: str = Field(alias="AUTH_JWT_AUDIENCE")
+    auth_access_token_expire_minutes: int = Field(default=15, alias="AUTH_ACCESS_TOKEN_EXPIRE_MINUTES")
+
     @field_validator("api_v1_prefix")
     @classmethod
     def normalize_prefix(cls, value: str) -> str:
@@ -38,6 +45,34 @@ class Settings(BaseSettings):
         # Keep as string; parsed by `cors_origin_list`. Validate non-empty for safety.
         if not value or not value.strip():
             raise ValueError("CORS_ORIGINS must not be empty")
+        return value
+
+    @field_validator("auth_jwt_secret")
+    @classmethod
+    def validate_auth_jwt_secret(cls, value: str) -> str:
+        secret = value.strip()
+        # Enforce the minimum UTF-8 byte length. Production secrets must be
+        # generated using a cryptographically secure random source.
+        # Test/CI environments must provide explicit non-production test-only values meeting this rule.
+        # Enforce minimum length in UTF-8 bytes (not characters) without exposing the secret value.
+        if len(secret.encode("utf-8")) < 32:
+            raise ValueError("AUTH_JWT_SECRET must be at least 32 UTF-8 bytes")
+        return secret
+
+    @field_validator("auth_jwt_issuer", "auth_jwt_audience")
+    @classmethod
+    def validate_auth_jwt_non_empty(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("value must not be empty")
+        return text
+
+    @field_validator("auth_access_token_expire_minutes")
+    @classmethod
+    def validate_auth_access_token_expire_minutes(cls, value: int) -> int:
+        # Approved B1 default is 15 minutes; enforce bounded, sensible values.
+        if value < 1 or value > 60:
+            raise ValueError("AUTH_ACCESS_TOKEN_EXPIRE_MINUTES must be between 1 and 60")
         return value
 
     @property

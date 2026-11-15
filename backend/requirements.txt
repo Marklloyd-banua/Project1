@@ -12,3 +12,6 @@ alembic>=1.13,<2.0.0
 # Production/CI may additionally use psycopg[binary] on Linux; the driver is chosen by the
 # DATABASE_URL dialect segment (e.g. postgresql+pg8000:// vs postgresql+psycopg://).
 pg8000>=1.31,<2.0.0
+# B1 (approved): authentication primitives dependencies (Argon2id + HS256 JWT)
+argon2-cffi>=23.1.0,<26.0.0
+PyJWT>=2.8.0,<3.0.0

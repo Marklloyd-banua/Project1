@@ -19,6 +19,13 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      # B1.1 config-only: required JWT settings for startup/config validation in CI.
+      # Non-production, test-only values; NEVER use real secrets in committed workflows.
+      AUTH_JWT_SECRET: test-only-ci-jwt-secret-value-at-least-32-chars
+      AUTH_JWT_ISSUER: https://ci.test.issuer.local
+      AUTH_JWT_AUDIENCE: northstar-ci-test-audience
+      AUTH_ACCESS_TOKEN_EXPIRE_MINUTES: "15"
     steps:
       - uses: actions/checkout@v4
 
@@ -63,6 +70,10 @@ jobs:
       - name: Safe-error contract over HTTP (misconfigured DATABASE_URL)
         run: |
           DATABASE_URL='postgresql+pg8000://ci_user:ci_secret_password@127.0.0.1:1/db' \
+          AUTH_JWT_SECRET='test-only-ci-jwt-secret-value-at-least-32-chars' \
+          AUTH_JWT_ISSUER='https://ci.test.issuer.local' \
+          AUTH_JWT_AUDIENCE='northstar-ci-test-audience' \
+          AUTH_ACCESS_TOKEN_EXPIRE_MINUTES='15' \
             nohup uvicorn app.main:app --host 127.0.0.1 --port 8001 >/tmp/uvicorn-bad.log 2>&1 &
           ok=""
           for i in $(seq 1 30); do
@@ -111,6 +122,12 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql+pg8000://postgres:postgres@127.0.0.1:5432/saas_admin_test
+      # B1.1 config-only: required JWT settings for startup/config validation in CI.
+      # Non-production, test-only values; NEVER use real secrets in committed workflows.
+      AUTH_JWT_SECRET: test-only-ci-jwt-secret-value-at-least-32-chars
+      AUTH_JWT_ISSUER: https://ci.test.issuer.local
+      AUTH_JWT_AUDIENCE: northstar-ci-test-audience
+      AUTH_ACCESS_TOKEN_EXPIRE_MINUTES: "15"
     steps:
       - uses: actions/checkout@v4
 

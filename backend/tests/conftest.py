@@ -21,6 +21,59 @@ from sqlalchemy import create_engine, text
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
+# B1.1 (config-only): provide explicit non-production, test-only JWT settings so
+# required Settings validation is satisfied in tests/CI without weakening production rules.
+# Real secrets must never be committed; CI/tests may override these via environment.
+TEST_AUTH_ENV = {
+    "AUTH_JWT_SECRET": "test-only-jwt-secret-value-at-least-32-chars",
+    "AUTH_JWT_ISSUER": "https://test.issuer.local",
+    "AUTH_JWT_AUDIENCE": "northstar-test-audience",
+    "AUTH_ACCESS_TOKEN_EXPIRE_MINUTES": "15",
+}
+
+# Save original environment values before forcing deterministic test-only values.
+_ORIGINAL_AUTH_ENV = {key: os.environ.get(key) for key in TEST_AUTH_ENV}
+
+# Force deterministic non-production test-only values before collection-time application imports.
+for _key, _value in TEST_AUTH_ENV.items():
+    os.environ[_key] = _value
+
+from app.core.config import get_settings as _get_settings
+
+_get_settings.cache_clear()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _restore_auth_env_session():
+    """Restore original AUTH_* environment after the test session, then clear settings cache."""
+    yield
+    for key, original in _ORIGINAL_AUTH_ENV.items():
+        if original is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _test_auth_env():
+    """Ensure deterministic per-test auth env and clear settings cache after restoration."""
+    previous = {key: os.environ.get(key) for key in TEST_AUTH_ENV}
+    for key, value in TEST_AUTH_ENV.items():
+        os.environ[key] = value
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    yield
+    for key, original in previous.items():
+        if original is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original
+    get_settings.cache_clear()
+
 
 def is_postgres() -> bool:
     return os.environ.get("DATABASE_URL", "sqlite:///./dev.db").startswith("postgresql")
