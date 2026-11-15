@@ -159,7 +159,7 @@ jobs:
           assert ready["ok"] is True and ready["status"] == "ready"
           assert ready["checks"]["database"] == "connected"
           tables = inspect(create_engine(os.environ["DATABASE_URL"])).get_table_names()
-          assert tables == ["alembic_version"], (
+          assert tables == [], (
               f"server boot must not create schema: {tables}"
           )
           print("PG health/ready verified; probe created no tables")
