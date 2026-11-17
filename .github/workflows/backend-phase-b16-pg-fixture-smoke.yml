@@ -1,0 +1,67 @@
+# B1.6 Step 1: PostgreSQL 16 fixture smoke tests (dedicated, disposable CI environment).
+# Runs only the integration_pg fixture smoke tests against an ephemeral service container.
+# CI-local disposable credentials only; never production databases or credentials.
+name: backend-phase-b16-pg-fixture-smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pg-fixture-smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # B1.6 fixture safety gates (fixed loopback-only allowlist: 127.0.0.1:5432).
+      # Dedicated test URL for fixture create/drop authorization; not ordinary DATABASE_URL.
+      NORTHSTAR_ALLOW_DISPOSABLE_PG_TEST_DB: "1"
+      B16_TEST_DATABASE_URL: postgresql+pg8000://postgres:postgres@127.0.0.1:5432/postgres
+      # Required test-only auth configuration (existing verified CI pattern; non-production).
+      AUTH_JWT_SECRET: test-only-ci-jwt-secret-value-at-least-32-chars
+      AUTH_JWT_ISSUER: https://ci.test.issuer.local
+      AUTH_JWT_AUDIENCE: northstar-ci-test-audience
+      AUTH_ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Wait for PostgreSQL readiness (explicit failure)
+        run: |
+          ready=""
+          for i in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U postgres >/dev/null 2>&1; then ready=1; break; fi
+            sleep 2
+          done
+          if [ -z "$ready" ]; then
+            echo "ERROR: PostgreSQL was not ready within 60 seconds"
+            exit 1
+          fi
+
+      - name: Run B1.6 PostgreSQL fixture smoke tests
+        run: PYTHONPATH=. pytest -q -ra tests/integration_pg/test_pg_api_fixture_smoke.py
