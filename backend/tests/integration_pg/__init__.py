@@ -1,0 +1,1 @@
+"""PostgreSQL-backed FastAPI API integration test foundation (B1.6 Step 1)."""
