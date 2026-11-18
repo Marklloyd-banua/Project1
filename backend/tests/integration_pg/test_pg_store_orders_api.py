@@ -597,7 +597,11 @@ def test_order_detail_existing_schema_nested_scoping_and_nested_ordering(
         _assert_order_item_contract(it, store_a["id"], order_a)
     assert items[0]["unit_price"] == "5.00" and items[0]["line_total"] == "5.00"
     assert items[0]["product_sku"] is None
-    assert items[1]["product_sku"] == "SKU-2"
+    # Equal-timestamp tie group (i2,i3): expected sequence derived from seeded items' actual UUID order (id ASC)
+    sku_by_item_id = {i2: "SKU-2", i3: "SKU-3"}
+    expected_tie_item_ids = sorted([i2, i3], key=lambda item_id: uuid.UUID(item_id))
+    assert item_ids[1:] == expected_tie_item_ids
+    assert [it["product_sku"] for it in items[1:]] == [sku_by_item_id[i] for i in expected_tie_item_ids]
 
     history = detail["status_history"]
     assert len(history) == 3
