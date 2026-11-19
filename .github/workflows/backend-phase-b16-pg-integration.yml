@@ -1,5 +1,6 @@
-# B1.6.12: PostgreSQL 16 API integration tests for B1.6 Step 2 modules (dedicated, disposable CI environment).
-# Runs exactly the ten B1.6.2–B1.6.11 PostgreSQL-backed HTTP API integration-test modules.
+# B1.6.12/B1: PostgreSQL 16 API integration and migration verification for B1.6 Step 2 modules plus B1 schema coverage
+# (dedicated, disposable CI environment). Runs the ten B1.6.2–B1.6.11 PostgreSQL-backed HTTP API integration-test modules,
+# the B1 storefront-hero PostgreSQL schema/migration module, and backend migration tests (disposable DB fixtures only).
 # Explicitly excludes test_pg_api_fixture_smoke.py (covered by backend-phase-b16-pg-fixture-smoke.yml).
 # CI-local disposable credentials only; never production databases or credentials.
 name: backend-phase-b16-pg-integration
@@ -35,6 +36,9 @@ jobs:
       # Dedicated test URL for fixture create/drop authorization; not ordinary DATABASE_URL.
       NORTHSTAR_ALLOW_DISPOSABLE_PG_TEST_DB: "1"
       B16_TEST_DATABASE_URL: postgresql+pg8000://postgres:postgres@127.0.0.1:5432/postgres
+      # CI-local disposable PostgreSQL service URL for root-conftest migration tests
+      # (creates/drops only uniquely named disposable phase2_* databases; never production).
+      DATABASE_URL: postgresql+pg8000://postgres:postgres@127.0.0.1:5432/postgres
       # Required test-only auth configuration (existing verified CI pattern; non-production).
       AUTH_JWT_SECRET: test-only-ci-jwt-secret-value-at-least-32-chars
       AUTH_JWT_ISSUER: https://ci.test.issuer.local
@@ -64,7 +68,7 @@ jobs:
             exit 1
           fi
 
-      - name: Run B1.6 Step 2 PostgreSQL API integration tests (serial)
+      - name: Run B1.6 Step 2 PostgreSQL API integration and migration verification tests (serial)
         run: >-
           PYTHONPATH=. pytest -q -ra
           tests/integration_pg/test_pg_auth_api.py
@@ -77,3 +81,5 @@ jobs:
           tests/integration_pg/test_pg_store_orders_api.py
           tests/integration_pg/test_pg_store_customers_api.py
           tests/integration_pg/test_pg_store_storefront_content_api.py
+          tests/integration_pg/test_pg_storefront_hero_schema_b1.py
+          tests/test_migrations.py

@@ -1,6 +1,6 @@
 """Phase 2 migration tests (PostgreSQL-only; disposable database via conftest).
 
-Verifies the four hand-written migrations end-to-end on PostgreSQL: exact
+Verifies the five hand-written migrations end-to-end on PostgreSQL: exact
 application-table set after upgrade, revision head, and a full
 downgrade/re-upgrade cycle. These tests CANNOT run on SQLite (the DDL is
 PostgreSQL-authored).
@@ -43,11 +43,11 @@ def test_upgrade_creates_exactly_19_tables(pg_database_url):
 
 
 @requires_pg
-def test_alembic_version_head_is_0004(pg_database_url):
+def test_alembic_version_head_is_0005(pg_database_url):
     engine = create_engine(pg_database_url)
     try:
         version = exec_sql(engine, "SELECT version_num FROM alembic_version").scalar_one()
-        assert version == "0004"
+        assert version == "0005"
     finally:
         engine.dispose()
 
