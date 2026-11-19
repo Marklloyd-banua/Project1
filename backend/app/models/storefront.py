@@ -1,8 +1,18 @@
-"""Storefront models (migration 0003): slides, sections, settings, footer links.
+"""Storefront models (migrations 0003, 0005): slides, sections, settings, footer links.
 
 JSONB columns (sections.config, settings.theme/social_links) are validated at
 the API layer only — no database FKs can protect JSONB-embedded references
 (approved ruling).
+
+Migration 0005 (category-driven hero foundation) evolves storefront_slides:
+- removes legacy max-4 position cap (retains position >= 1 and UNIQUE(store_id, position))
+- adds authoritative category mapping (category_id, nullable for unmappable legacy rows)
+- adds featured_product_id (nullable) and admin_is_enabled (preserves admin intent)
+- adds composite FKs for same-store category/product integrity
+- enforces uniqueness for mapped (store_id, category_id) rows while allowing unmapped legacy rows
+
+Legacy columns/fields (including target_category_id and is_active) remain for B1.5B/B1.6
+compatibility.
 """
 
 from __future__ import annotations
@@ -19,6 +29,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -43,10 +54,19 @@ class StorefrontSlide(Base, UuidPk, Timestamped):
     cta_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     cta_label: Mapped[str | None] = mapped_column(String(100), nullable=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
-    # Optional same-store category link; migration 0003 defines the PostgreSQL
+    # Legacy optional same-store category link; migration 0003 defines PostgreSQL
     # column-list `ON DELETE SET NULL (target_category_id)`.
     target_category_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # 0005: authoritative category mapping (nullable for unmappable legacy compatibility rows).
+    category_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, default=None)
+    # 0005: manual featured product selection (same store/category validated in service logic).
+    featured_product_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, default=None)
+    # 0005: preserves administrative intent when a mapping is temporarily ineligible/omitted publicly.
+    admin_is_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -58,9 +78,36 @@ class StorefrontSlide(Base, UuidPk, Timestamped):
             ondelete="RESTRICT",  # authoritative: migration SET NULL (target_category_id)
             name="storefront_slides_store_category_fk",
         ),
-        # Hard cap of FOUR slides per store: position 1..4 + one per position.
-        CheckConstraint("position BETWEEN 1 AND 4", name="position_range"),
+        # 0005: authoritative mapping FK (category delete removes mapping row).
+        ForeignKeyConstraint(
+            ["store_id", "category_id"],
+            ["categories.store_id", "categories.id"],
+            ondelete="CASCADE",
+            name="storefront_slides_store_category_mapping_fk",
+        ),
+        # 0005: featured product FK.
+        # Dialect limitation: PostgreSQL requires column-list SET NULL to clear only
+        # featured_product_id (`ON DELETE SET NULL (featured_product_id)`) while preserving
+        # store_id/category_id/mapping/admin intent. Generic SQLAlchemy metadata cannot
+        # express this portably, so no `ondelete` is declared here to avoid falsely claiming
+        # ordinary composite SET NULL. Alembic migration 0005 is authoritative for the actual
+        # PostgreSQL FK/delete behavior.
+        ForeignKeyConstraint(
+            ["store_id", "featured_product_id"],
+            ["products.store_id", "products.id"],
+            name="storefront_slides_store_featured_product_fk",
+        ),
+        # Owner-controlled ordering (unique per store); positions normalized transaction-safely.
         UniqueConstraint("store_id", "position", name="storefront_slides_position_unique"),
+        # Uniqueness for mapped rows only: NULL category_id (unmapped legacy rows) may repeat
+        # per store under standard UNIQUE NULL semantics (portable PostgreSQL/SQLite).
+        UniqueConstraint(
+            "store_id",
+            "category_id",
+            name="uq_storefront_slides_store_category_mapping",
+        ),
+        # Legacy max-4 cap removed in 0005; minimum retained.
+        CheckConstraint("position >= 1", name="position_min"),
         CheckConstraint(
             "image_url LIKE 'http://%' OR image_url LIKE 'https://%'",
             name="image_url_http_scheme",
