@@ -8,7 +8,15 @@ from app.api.deps import _unauthorized, get_current_active_staff_user
 from app.core.db import get_db
 from app.core.security import create_access_token, verify_password
 from app.models.staff_user import StaffUser
-from app.schemas.auth import LoginRequest, MeResponse, TokenResponse, normalize_email
+from app.models.store import Store, StoreMembership
+from app.schemas.auth import (
+    AuthenticatedStoreMembershipItem,
+    AuthenticatedStoreMembershipListResponse,
+    LoginRequest,
+    MeResponse,
+    TokenResponse,
+    normalize_email,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -39,3 +47,27 @@ def me(current_user: StaffUser = Depends(get_current_active_staff_user)) -> MeRe
         global_role=current_user.global_role,
         status=current_user.status,
     )
+
+
+@router.get("/me/stores", response_model=AuthenticatedStoreMembershipListResponse)
+def list_my_store_memberships(
+    current_user: StaffUser = Depends(get_current_active_staff_user),
+    db: Session = Depends(get_db),
+) -> AuthenticatedStoreMembershipListResponse:
+    rows = db.execute(
+        select(Store, StoreMembership.role)
+        .join(StoreMembership, StoreMembership.store_id == Store.id)
+        .where(StoreMembership.staff_user_id == current_user.id)
+        .order_by(Store.name.asc(), Store.id.asc())
+    ).all()
+
+    items = [
+        AuthenticatedStoreMembershipItem(
+            store_id=store.id,
+            store_name=store.name,
+            store_status=store.status,
+            membership_role=role,
+        )
+        for store, role in rows
+    ]
+    return AuthenticatedStoreMembershipListResponse(items=items)
