@@ -127,13 +127,50 @@ def test_alembic_head_is_0005_and_storefront_slide_columns(pg_api_engine):
     assert cols["admin_is_enabled"]["nullable"] is False
 
     # Position min constraint present; legacy max-4 range constraint removed.
+    # Verify real PostgreSQL constraint semantics via catalog metadata (authoritative for
+    # actual name/definition), with reflection as a secondary view.
+    with pg_api_engine.connect() as conn:
+        pg_checks = conn.execute(
+            text(
+                """
+                SELECT con.conname AS name, pg_get_constraintdef(con.oid) AS definition
+                FROM pg_constraint con
+                JOIN pg_class rel ON rel.oid = con.conrelid
+                JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+                WHERE rel.relname = 'storefront_slides'
+                  AND nsp.nspname = current_schema()
+                  AND con.contype = 'c'
+                """
+            )
+        ).mappings().all()
+
+    def _norm_check_def(definition: str) -> str:
+        # Normalize PostgreSQL check-definition formatting for semantic comparison.
+        s = (definition or "").strip()
+        if s.upper().startswith("CHECK"):
+            s = s[5:].strip()
+        # strip balanced outer parentheses layers added by pg_get_constraintdef/PG formatting
+        while s.startswith("(") and s.endswith(")"):
+            inner = s[1:-1].strip()
+            if not inner:
+                break
+            s = inner
+        return " ".join(s.replace('"', "").split()).lower()
+
+    normalized_defs = [_norm_check_def(r["definition"]) for r in pg_checks]
+    pg_check_names = {r["name"] for r in pg_checks}
+
+    # Must enforce position >= 1 (actual DB semantics) and must not retain legacy 1..4 cap.
+    assert any(d == "position >= 1" for d in normalized_defs), normalized_defs
+    assert not any("between 1 and 4" in d or "between 1 and 4" in (r["definition"] or "").lower() for d, r in zip(normalized_defs, pg_checks)), [
+        (r["name"], r["definition"]) for r in pg_checks
+    ]
+    assert "ck_storefront_slides_position_range" not in pg_check_names
+
     checks = {c["name"]: c for c in insp.get_check_constraints("storefront_slides")}
-    assert "ck_storefront_slides_position_min" in checks or any(
-        "position >= 1" in (c.get("sqltext") or "") for c in checks.values()
-    )
     assert "ck_storefront_slides_position_range" not in checks
     assert not any(
-        "BETWEEN 1 AND 4" in (c.get("sqltext") or "") for c in checks.values()
+        "BETWEEN 1 AND 4" in (c.get("sqltext") or "").upper() for c in checks.values()
     )
 
     uniques = {u["name"]: u for u in insp.get_unique_constraints("storefront_slides")}
