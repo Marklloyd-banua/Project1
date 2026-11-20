@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import Literal
+from uuid import UUID
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -31,3 +34,14 @@ class MeResponse(BaseModel):
     full_name: str
     global_role: str
     status: str
+
+
+class AuthenticatedStoreMembershipItem(BaseModel):
+    store_id: UUID
+    store_name: str
+    store_status: str
+    membership_role: Literal["owner", "manager", "viewer"]
+
+
+class AuthenticatedStoreMembershipListResponse(BaseModel):
+    items: list[AuthenticatedStoreMembershipItem]

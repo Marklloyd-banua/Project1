@@ -72,6 +72,8 @@ jobs:
         run: >-
           PYTHONPATH=. pytest -q -ra
           tests/integration_pg/test_pg_auth_api.py
+          tests/integration_pg/test_pg_auth_me_stores_api.py
+          tests/test_auth_b13b.py
           tests/integration_pg/test_pg_store_authorization_api.py
           tests/integration_pg/test_pg_store_isolation_api.py
           tests/integration_pg/test_pg_store_workspace_api.py
