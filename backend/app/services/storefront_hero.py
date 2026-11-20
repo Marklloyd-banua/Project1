@@ -22,6 +22,12 @@ from sqlalchemy.orm import Session
 from app.models.category import Category
 from app.models.product import Product, ProductImage
 from app.models.storefront import StorefrontSlide
+from app.schemas.storefront_hero import (
+    StorefrontHeroEligibilityResponse,
+    StorefrontHeroFeaturedProductResponse,
+    StorefrontHeroListResponse,
+    StorefrontHeroMappingResponse,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -428,3 +434,120 @@ def reorder_mapped_categories(
     ordered_slides = [mapped_by_category[cid] for cid in normalized_ids]
     normalize_mapped_positions(db, sid, ordered_slides=ordered_slides)
     return ordered_slides
+
+
+# ---------------------------------------------------------------------------
+# Read-only admin hero response assembly (B2 foundation)
+# ---------------------------------------------------------------------------
+
+
+def _assemble_featured_product_response(
+    product: Product,
+) -> StorefrontHeroFeaturedProductResponse:
+    return StorefrontHeroFeaturedProductResponse(
+        id=product.id,
+        store_id=product.store_id,
+        category_id=product.category_id,
+        name=product.name,
+        slug=product.slug,
+        image=product.image,
+        status=product.status,
+    )
+
+
+def assemble_storefront_hero_mapping_read(
+    db: Session, slide: StorefrontSlide
+) -> StorefrontHeroMappingResponse:
+    """Assemble a read-only admin hero mapping response for a mapped slide.
+
+    Reuses existing B1 eligibility and featured-resolution helpers. Computes
+    eligibility and effective resolution without mutating mappings, positions,
+    stored selections, enablement, or any database state. The stored
+    featured_product_id is always preserved in the response.
+    """
+    if slide.category_id is None:
+        raise StorefrontHeroDomainError("Cannot assemble hero read model for unmapped slide.")
+
+    sid = slide.store_id
+    cid = slide.category_id
+
+    # Eligibility via existing B1 rules (store-scoped reads).
+    category_active = category_is_active(db, sid, cid)
+    has_eligible_active_product = category_has_eligible_active_product(db, sid, cid)
+    eligibility = StorefrontHeroEligibilityResponse(
+        category_active=category_active,
+        has_eligible_active_product=has_eligible_active_product,
+        is_publicly_eligible=(category_active and has_eligible_active_product),
+    )
+
+    # Manual selection validity (stored selection preserved regardless of validity).
+    manual_featured_product_valid = False
+    if slide.featured_product_id is not None:
+        try:
+            validate_manual_featured_product(db, sid, cid, slide.featured_product_id)
+            manual_featured_product_valid = True
+        except FeaturedProductValidationError:
+            manual_featured_product_valid = False
+
+    # Effective resolution via existing B1 manual/fallback rules (read-only).
+    resolution = resolve_featured_product_for_mapping(db, slide)
+    effective_featured_product = (
+        _assemble_featured_product_response(resolution.product)
+        if resolution.product is not None
+        else None
+    )
+
+    return StorefrontHeroMappingResponse(
+        id=slide.id,
+        store_id=slide.store_id,
+        category_id=cid,
+        position=slide.position,
+        admin_is_enabled=slide.admin_is_enabled,
+        is_active=slide.is_active,
+        featured_product_id=slide.featured_product_id,
+        eligibility=eligibility,
+        manual_featured_product_valid=manual_featured_product_valid,
+        effective_featured_product=effective_featured_product,
+        featured_resolution_source=resolution.source,
+        title=slide.title,
+        subtitle=slide.subtitle,
+        image_url=slide.image_url,
+        cta_url=slide.cta_url,
+        cta_label=slide.cta_label,
+        target_category_id=slide.target_category_id,
+        created_at=slide.created_at,
+        updated_at=slide.updated_at,
+    )
+
+
+def list_storefront_hero_mappings(
+    db: Session,
+    store_id: uuid.UUID | str,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+) -> StorefrontHeroListResponse:
+    """Return paginated, read-only admin hero mappings for one store.
+
+    Retrieves all mapped category hero records for the requested store (including
+    disabled and currently ineligible mappings), assembled with stored intent,
+    eligibility, manual-selection validity, and effective featured-product
+    resolution. Deterministic ordering is by mapping position ASC, id ASC.
+    All reads are strictly store-scoped and no database state is mutated.
+    """
+    sid = _normalize_uuid(store_id)
+    slides = list_mapped_slides_ordered(db, sid)
+    total = len(slides)
+
+    safe_page = page if page >= 1 else 1
+    safe_page_size = page_size if page_size >= 1 else 20
+    start = (safe_page - 1) * safe_page_size
+    page_slides = slides[start : start + safe_page_size] if start < total else []
+
+    items = [assemble_storefront_hero_mapping_read(db, slide) for slide in page_slides]
+    return StorefrontHeroListResponse(
+        items=items,
+        total=total,
+        page=safe_page,
+        page_size=safe_page_size,
+    )

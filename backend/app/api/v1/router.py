@@ -1,6 +1,19 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, health, store_categories, store_customers, store_inventory_adjustments, store_memberships, store_orders, store_products, store_storefront_content, store_workspace, stores
+from app.api.v1.endpoints import (
+    auth,
+    health,
+    store_categories,
+    store_customers,
+    store_inventory_adjustments,
+    store_memberships,
+    store_orders,
+    store_products,
+    store_storefront_content,
+    store_storefront_hero,
+    store_workspace,
+    stores,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -14,3 +27,4 @@ api_router.include_router(store_inventory_adjustments.router)
 api_router.include_router(store_orders.router)
 api_router.include_router(store_customers.router)
 api_router.include_router(store_storefront_content.router)
+api_router.include_router(store_storefront_hero.router)

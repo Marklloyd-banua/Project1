@@ -81,5 +81,6 @@ jobs:
           tests/integration_pg/test_pg_store_orders_api.py
           tests/integration_pg/test_pg_store_customers_api.py
           tests/integration_pg/test_pg_store_storefront_content_api.py
+          tests/integration_pg/test_pg_store_storefront_hero_api.py
           tests/integration_pg/test_pg_storefront_hero_schema_b1.py
           tests/test_migrations.py
